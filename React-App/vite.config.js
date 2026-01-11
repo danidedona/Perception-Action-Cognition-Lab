@@ -1,9 +1,11 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+const isPages = process.env.DEPLOY_TARGET === "pages";
+
 export default defineConfig({
   plugins: [react()],
-  base: "/songlab/",
+  base: isPages ? "/Perception-Action-Cognition-Lab/" : "/songlab/",
   build: {
     rollupOptions: {
       output: {
