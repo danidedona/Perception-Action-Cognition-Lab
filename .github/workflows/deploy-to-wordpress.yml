@@ -1,11 +1,11 @@
-name: Deploy build assets to WordPress Media
+name: Build + Deploy React to WordPress (Media + Update Home Page)
 
 on:
   push:
     branches: ["main"]
 
 jobs:
-  build-and-upload:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
@@ -17,29 +17,34 @@ jobs:
         with:
           node-version: 20
           cache: "npm"
+          cache-dependency-path: React-App/package-lock.json
 
       - name: Install
+        working-directory: React-App
         run: npm ci
 
       - name: Build
+        working-directory: React-App
         run: npm run build
 
-      - name: Upload dist/assets to WordPress Media
+      - name: Upload assets + update WordPress Home page
+        working-directory: React-App
         env:
-          WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
+          WP_BASE_URL: ${{ secrets.WP_BASE_URL }}          # https://sites.brown.edu/songlab
           WP_USERNAME: ${{ secrets.WP_USERNAME }}
           WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+          WP_PAGE_ID: ${{ secrets.WP_PAGE_ID }}            # 192
         run: |
           set -euo pipefail
 
-          # Basic auth token for WP REST API
           AUTH="$(printf "%s:%s" "$WP_USERNAME" "$WP_APP_PASSWORD" | base64 -w 0)"
-          API="$WP_BASE_URL/wp-json/wp/v2/media"
+          MEDIA_API="$WP_BASE_URL/wp-json/wp/v2/media"
+          PAGE_API="$WP_BASE_URL/wp-json/wp/v2/pages/$WP_PAGE_ID"
 
-          echo "Uploading build assets to $API"
-          echo ""
+          js_url=""
+          css_url=""
 
-          # Upload JS/CSS files
+          echo "Uploading dist/assets JS/CSS to WordPress Media…"
           shopt -s nullglob
           for file in dist/assets/*.{js,css}; do
             fname="$(basename "$file")"
@@ -47,26 +52,57 @@ jobs:
             if [[ "$fname" == *.js ]]; then mime="text/javascript"; fi
             if [[ "$fname" == *.css ]]; then mime="text/css"; fi
 
-            echo "→ Uploading $fname ($mime)"
+            echo "→ Uploading $fname"
 
-            # Upload to WP Media endpoint
-            # - Content-Disposition sets the filename
-            # - X-WP-Nonce is not needed with basic auth + application password
-            resp="$(curl -sS -X POST "$API" \
+            resp="$(curl -sS -X POST "$MEDIA_API" \
               -H "Authorization: Basic $AUTH" \
               -H "Content-Disposition: attachment; filename=$fname" \
               -H "Content-Type: $mime" \
               --data-binary @"$file")"
 
-            # Print the resulting URL (source_url)
             url="$(echo "$resp" | python3 -c "import sys, json; print(json.load(sys.stdin).get('source_url',''))")"
-
             if [[ -z "$url" ]]; then
-              echo "Upload failed. Response:"
+              echo "Upload failed:"
               echo "$resp"
               exit 1
             fi
 
             echo "   Uploaded URL: $url"
-            echo ""
+
+            if [[ "$fname" == *.js ]]; then js_url="$url"; fi
+            if [[ "$fname" == *.css ]]; then css_url="$url"; fi
           done
+
+          if [[ -z "$js_url" || -z "$css_url" ]]; then
+            echo "Missing JS or CSS URL. JS=$js_url CSS=$css_url"
+            exit 1
+          fi
+
+          new_content=$(cat <<EOF
+<div id="songlab-root"></div>
+
+<link rel="stylesheet" href="$css_url" />
+<script type="module" src="$js_url"></script>
+EOF
+          )
+
+          payload="$(NEW_CONTENT="$new_content" python3 - <<'PY'
+import json, os
+print(json.dumps({"content": os.environ["NEW_CONTENT"]}))
+PY
+          )"
+
+          echo "Updating WordPress page $WP_PAGE_ID…"
+          update_resp="$(curl -sS -X POST "$PAGE_API" \
+            -H "Authorization: Basic $AUTH" \
+            -H "Content-Type: application/json" \
+            --data "$payload")"
+
+          link="$(echo "$update_resp" | python3 -c "import sys, json; print(json.load(sys.stdin).get('link',''))")"
+          if [[ -z "$link" ]]; then
+            echo "Page update failed:"
+            echo "$update_resp"
+            exit 1
+          fi
+
+          echo "✅ Updated homepage: $link"
