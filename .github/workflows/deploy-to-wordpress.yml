@@ -1,0 +1,72 @@
+name: Deploy build assets to WordPress Media
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload dist/assets to WordPress Media
+        env:
+          WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
+          WP_USERNAME: ${{ secrets.WP_USERNAME }}
+          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          # Basic auth token for WP REST API
+          AUTH="$(printf "%s:%s" "$WP_USERNAME" "$WP_APP_PASSWORD" | base64 -w 0)"
+          API="$WP_BASE_URL/wp-json/wp/v2/media"
+
+          echo "Uploading build assets to $API"
+          echo ""
+
+          # Upload JS/CSS files
+          shopt -s nullglob
+          for file in dist/assets/*.{js,css}; do
+            fname="$(basename "$file")"
+            mime="application/octet-stream"
+            if [[ "$fname" == *.js ]]; then mime="text/javascript"; fi
+            if [[ "$fname" == *.css ]]; then mime="text/css"; fi
+
+            echo "→ Uploading $fname ($mime)"
+
+            # Upload to WP Media endpoint
+            # - Content-Disposition sets the filename
+            # - X-WP-Nonce is not needed with basic auth + application password
+            resp="$(curl -sS -X POST "$API" \
+              -H "Authorization: Basic $AUTH" \
+              -H "Content-Disposition: attachment; filename=$fname" \
+              -H "Content-Type: $mime" \
+              --data-binary @"$file")"
+
+            # Print the resulting URL (source_url)
+            url="$(echo "$resp" | python3 -c "import sys, json; print(json.load(sys.stdin).get('source_url',''))")"
+
+            if [[ -z "$url" ]]; then
+              echo "Upload failed. Response:"
+              echo "$resp"
+              exit 1
+            fi
+
+            echo "   Uploaded URL: $url"
+            echo ""
+          done
