@@ -65,7 +65,7 @@
 //   );
 // }
 
-import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import NavBar from "./components/NavBar";
 
 import HomePage from "./pages/HomePage";
@@ -80,10 +80,9 @@ import ContactPage from "./pages/ContactPage";
 
 export default function App() {
   return (
-    <HashRouter>
+    <BrowserRouter basename="/songlab">
       <div className="min-h-screen bg-white text-gray-900">
         <NavBar />
-
         <main className="mx-auto max-w-6xl px-4 py-6">
           <Routes>
             <Route path="/" element={<HomePage />} />
@@ -95,12 +94,10 @@ export default function App() {
             <Route path="/research" element={<ResearchPage />} />
             <Route path="/teaching" element={<TeachingPage />} />
             <Route path="/contact" element={<ContactPage />} />
-
-            {/* fallback */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
       </div>
-    </HashRouter>
+    </BrowserRouter>
   );
 }
